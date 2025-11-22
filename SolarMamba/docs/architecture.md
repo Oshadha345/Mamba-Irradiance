@@ -99,3 +99,78 @@ graph TD
 ### 4. Head
 - **Structure:** Global Average Pooling -> Concatenation -> MLP -> Sigmoid -> Scale (1.2).
 - **Output:** Clear Sky Index ($k^*$).
+
+## Detailed Component Architectures
+
+### 1. MambaVision Mixer Block
+The core building block of the Visual Encoder. Unlike standard Transformers, it uses a State Space Model (SSM) for linear-time sequence modeling.
+
+```mermaid
+graph TD
+    Input[Input Tensor] --> Norm[LayerNorm]
+    Norm --> Linear_In[Linear Projection]
+    Linear_In --> Split{Split}
+    
+    subgraph "Main Branch"
+        Split -- x --> Conv1_x[Conv1d]
+        Conv1_x --> SiLU_x[SiLU]
+        SiLU_x --> SSM[Selective Scan (SSM)]
+    end
+    
+    subgraph "Gating Branch"
+        Split -- z --> Conv1_z[Conv1d]
+        Conv1_z --> SiLU_z[SiLU]
+    end
+    
+    SSM --> Concat[Concatenation]
+    SiLU_z --> Concat
+    Concat --> Linear_Out[Linear Projection]
+    Linear_Out --> Output[Output Tensor]
+```
+
+### 2. Ladder Fusion Block
+The mechanism for injecting physics-informed temporal context into the visual features. It uses a residual gating architecture.
+
+```mermaid
+graph TD
+    subgraph Inputs
+        V[Visual Feature Map]
+        T[Temporal Vector]
+    end
+    
+    T --> Linear[Linear Projection]
+    Linear --> Reshape[Reshape & Broadcast]
+    Reshape --> Sigmoid[Sigmoid Activation]
+    Sigmoid --> Gate((Gate G))
+    
+    V --> Mult[Element-wise Multiply]
+    Gate --> Mult
+    
+    Mult --> Add[Element-wise Add]
+    V --> Add
+    
+    Add --> Output[Fused Feature]
+```
+
+### 3. Pyramid TCN (Temporal Encoder)
+A multi-scale temporal encoder designed to capture weather patterns at different frequencies (noise, daily cycles, weather systems, trends).
+
+```mermaid
+graph TD
+    Input[Weather Sequence] --> Embed[Linear Embedding]
+    Embed --> Permute[Permute (B, C, T)]
+    
+    subgraph "Parallel Branches"
+        Permute --> B1[Conv1d k=3]
+        Permute --> B2[Conv1d k=5]
+        Permute --> B3[Conv1d k=7]
+        Permute --> B4[Conv1d k=9]
+        
+        B1 --> R1[ReLU] --> P1[Global Avg Pool]
+        B2 --> R2[ReLU] --> P2[Global Avg Pool]
+        B3 --> R3[ReLU] --> P3[Global Avg Pool]
+        B4 --> R4[ReLU] --> P4[Global Avg Pool]
+    end
+    
+    P1 & P2 & P3 & P4 --> Output[List of 4 Vectors]
+```
