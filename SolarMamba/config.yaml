@@ -1,0 +1,21 @@
+# SolarMamba Configuration
+
+data:
+  images_dir: "../data/images"
+  met_data_path: "../data/PSA_timeSeries_Metas.csv"
+  batch_size: 16
+  num_workers: 4
+  sequence_length: 60  # Minutes of past weather data
+  image_size: 512
+
+model:
+  visual_backbone: "mamba_vision_B" # Options: mamba_vision_T, mamba_vision_S, mamba_vision_B, mamba_vision_L
+  temporal_channels: 7 # GHI, DNI, DHI, Temp, Pressure, SZA, Azimuth
+  pretrained_weights: "../weights/mambavision_b_1k.pth"
+
+training:
+  epochs: 50
+  learning_rate: 1.0e-4
+  weight_decay: 1.0e-2
+  val_split: 0.2
+  seed: 42
