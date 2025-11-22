@@ -114,7 +114,7 @@ graph TD
     subgraph Main_Branch
         Split -- x --> Conv1_x[Conv1d]
         Conv1_x --> SiLU_x[SiLU]
-        SiLU_x --> SSM[Selective Scan (SSM)]
+        SiLU_x --> SSM["Selective Scan<br>SSM"]
     end
     
     subgraph Gating_Branch
@@ -126,6 +126,7 @@ graph TD
     SiLU_z --> Concat
     Concat --> Linear_Out[Linear Projection]
     Linear_Out --> Output[Output Tensor]
+
 ```
 
 ### 2. Ladder Fusion Block
@@ -158,7 +159,7 @@ A multi-scale temporal encoder designed to capture weather patterns at different
 ```mermaid
 graph TD
     Input[Weather Sequence] --> Embed[Linear Embedding]
-    Embed --> Permute[Permute (B, C, T)]
+    Embed --> Permute["Permute<br>(B,C,T)"]
     
     subgraph Parallel_Branches
         Permute --> B1[Conv1d k=3]
