@@ -14,30 +14,30 @@ graph TD
     classDef output fill:#e0f2f1,stroke:#004d40,stroke-width:2px,color:black;
 
     %% --- INPUTS ---
-    Img[("ASI Image\n(512x512)")]:::deep
-    Meta[("PSA Metadata\n(Lat/Lon/Time)")]:::phys
-    Hist[("Met History\n(GHI, Temp, Press)")]:::phys
+    Img["ASI Image<br>(512×512)"]:::deep
+    Meta["PSA Metadata<br>Lat / Lon / Time"]:::phys
+    Hist["Met History<br>GHI, Temp, Pressure"]:::phys
 
     %% --- PHYSICS ENGINE ---
     subgraph "Physics Engine (pvlib)"
-        Calc[Calculate Solar Position\n(SZA, Azimuth)]:::phys
-        CS[Calculate Clear Sky GHI\n(Ineichen Model)]:::phys
-        Norm[Normalize Target:\nk* = GHI / GHI_cs]:::phys
+        Calc["Solar Position<br>SZA, Azimuth"]:::phys
+        CS["Clear Sky GHI<br>Ineichen Model"]:::phys
+        Norm["Normalize Target<br>k* = GHI / GHI_cs"]:::phys
     end
 
     %% --- ENCODERS ---
     subgraph "Visual Encoder (MambaVision)"
-        S1[Stage 1: Texture]:::deep
-        S2[Stage 2: Shape]:::deep
-        S3[Stage 3: Global]:::deep
-        S4[Stage 4: Semantic]:::deep
+        S1["Stage 1<br>Texture"]:::deep
+        S2["Stage 2<br>Shape"]:::deep
+        S3["Stage 3<br>Global"]:::deep
+        S4["Stage 4<br>Semantic"]:::deep
     end
 
     subgraph "Temporal Encoder (Pyramid TCN)"
-        T1[Branch 1: Noise]:::phys
-        T2[Branch 2: Daily]:::phys
-        T3[Branch 3: System]:::phys
-        T4[Branch 4: Trend]:::phys
+        T1["Branch 1<br>Noise"]:::phys
+        T2["Branch 2<br>Daily"]:::phys
+        T3["Branch 3<br>System"]:::phys
+        T4["Branch 4<br>Trend"]:::phys
     end
 
     %% --- GATED FUSION ---
@@ -49,27 +49,35 @@ graph TD
     end
 
     %% --- FLOW ---
-    Meta --> Calc & CS
+    Meta --> Calc
+    Meta --> CS
     Hist --> Norm
     CS --> Norm
     
-    %% Image Path
     Img --> S1 --> S2 --> S3 --> S4
     
-    %% Time Path (Physics Augmented)
     Calc --> T1 & T2 & T3 & T4
     Norm --> T1 & T2 & T3 & T4
 
-    %% Cross Connections (Gating)
-    S1 & T1 --> F1
-    S2 & T2 --> F2
-    S3 & T3 --> F3
-    S4 & T4 --> F4
+    %% Cross Connections
+    S1 --> F1
+    T1 --> F1
+
+    S2 --> F2
+    T2 --> F2
+
+    S3 --> F3
+    T3 --> F3
+
+    S4 --> F4
+    T4 --> F4
 
     %% RECONSTRUCTION
-    F1 & F2 & F3 & F4 --> Concat[Aggregator] --> PredK([Predict k*]):::output
-    PredK & CS --> Recon[Reconstruct GHI:\nGHI = k* × GHI_cs]:::output
-    Recon --> Final([Final Forecast]):::output
+    F1 & F2 & F3 & F4 --> Concat["Aggregator"]:::output
+    Concat --> PredK["Predict k*"]:::output
+    PredK --> Recon
+    CS --> Recon
+    Recon["Reconstruct GHI<br>GHI = k* × GHI_cs"]:::output --> Final["Final Forecast"]:::output
 ```
 
 ## Components
