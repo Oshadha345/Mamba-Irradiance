@@ -111,13 +111,13 @@ graph TD
     Norm --> Linear_In[Linear Projection]
     Linear_In --> Split{Split}
     
-    subgraph "Main Branch"
+    subgraph Main_Branch
         Split -- x --> Conv1_x[Conv1d]
         Conv1_x --> SiLU_x[SiLU]
         SiLU_x --> SSM[Selective Scan (SSM)]
     end
     
-    subgraph "Gating Branch"
+    subgraph Gating_Branch
         Split -- z --> Conv1_z[Conv1d]
         Conv1_z --> SiLU_z[SiLU]
     end
@@ -160,7 +160,7 @@ graph TD
     Input[Weather Sequence] --> Embed[Linear Embedding]
     Embed --> Permute[Permute (B, C, T)]
     
-    subgraph "Parallel Branches"
+    subgraph Parallel_Branches
         Permute --> B1[Conv1d k=3]
         Permute --> B2[Conv1d k=5]
         Permute --> B3[Conv1d k=7]
@@ -173,4 +173,5 @@ graph TD
     end
     
     P1 & P2 & P3 & P4 --> Output[List of 4 Vectors]
+
 ```
