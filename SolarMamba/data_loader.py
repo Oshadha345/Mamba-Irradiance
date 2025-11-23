@@ -9,86 +9,74 @@ import pvlib
 from datetime import datetime, timedelta
 
 class SolarDataset(Dataset):
-    def __init__(self, images_dir, met_data_path, sequence_length=60, transform=None):
-        self.images_dir = images_dir
-        self.sequence_length = sequence_length
+    def __init__(self, config, transform=None):
+        self.config = config
         self.transform = transform
         
-        # 1. Parse Metadata and Data
-        self.lat, self.lon, self.alt, self.df = self._parse_met_data(met_data_path)
+        # Determine Root Path
+        if config['env'] == 'server':
+            self.root_dir = config['data']['server_root']
+        else:
+            self.root_dir = config['data']['local_root']
+            
+        self.months = config['data']['months']
+        self.sequence_length = config['data']['sequence_length']
+        self.sampling_rate = config['data']['sampling_rate_sec']
+        self.horizons = config['model']['horizons'] # [1, 5, 10, 15]
+        
+        # 1. Load and Concatenate Data
+        self.df = self._load_all_data()
         
         # 2. Feature Engineering (Physics-Informed)
+        self.lat = 37.0916
+        self.lon = -2.3636
+        self.alt = 490.6
         self.df = self._add_solar_physics(self.df, self.lat, self.lon, self.alt)
         
         # 3. Filter Night Time (SZA > 85)
         self.df = self.df[self.df['SZA'] <= 85]
         
         # 4. Normalize Features
-        # Input Feats: [k_index_lag, Temp, Pressure, SZA, Azimuth, sin_hour, cos_hour]
-        
-        feature_cols = ['k_index', 'Temp', 'Pressure', 'SZA', 'Azimuth', 'sin_hour', 'cos_hour']
-        
+        feature_cols = ['k_index', 'temperature', 'pressure', 'SZA', 'Azimuth', 'sin_hour', 'cos_hour']
         self.feature_cols = feature_cols
+        
         self.mean = self.df[feature_cols].mean()
         self.std = self.df[feature_cols].std()
         
         # Normalize Temp, Pressure, SZA, Azimuth
-        cols_to_norm = ['Temp', 'Pressure', 'SZA', 'Azimuth']
+        cols_to_norm = ['temperature', 'pressure', 'SZA', 'Azimuth']
         self.df[cols_to_norm] = (self.df[cols_to_norm] - self.mean[cols_to_norm]) / (self.std[cols_to_norm] + 1e-6)
         
         # 5. Match Images
         self.samples = self._match_images()
 
-    def _parse_met_data(self, path):
-        # Read header to get coordinates
-        with open(path, 'r') as f:
-            lines = f.readlines()
+    def _load_all_data(self):
+        dfs = []
+        for month in self.months:
+            csv_path = os.path.join(self.root_dir, 'datasets', 'full_dataset', f'metas_{month}_labels.csv')
+            if not os.path.exists(csv_path):
+                print(f"Warning: {csv_path} not found.")
+                continue
             
-        lat = 37.0916
-        lon = -2.3636
-        alt = 490.6 # Updated from prompt
-        
-        # Try to find them in the header if possible
-        for line in lines[:17]:
-            if 'Lat' in line:
-                try:
-                    lat = float(line.split(':')[1].strip())
-                except Exception:
-                    pass
-            if 'Lon' in line:
-                try:
-                    lon = float(line.split(':')[1].strip())
-                except Exception:
-                    pass
-            if 'Altitude' in line:
-                try:
-                    alt = float(line.split(':')[1].strip())
-                except Exception:
-                    pass
-
-        # Read data
-        try:
-            df = pd.read_csv(path, skiprows=17, sep='\s+', engine='python')
-        except Exception:
-            df = pd.read_csv(path, skiprows=17, sep='\t')
+            # Format: Date,GHI,DNI,DHI,temperature,pressure
+            df = pd.read_csv(csv_path)
             
-        # Combine Date + Time -> DatetimeIndex
-        if 'Date' in df.columns and 'Time' in df.columns:
-            df['Datetime'] = pd.to_datetime(df['Date'] + ' ' + df['Time'])
-        else:
-            df['Datetime'] = pd.to_datetime(df.iloc[:, 0].astype(str) + ' ' + df.iloc[:, 1].astype(str))
+            # Parse Date: YYYYMMDDHHMMSS
+            df['Datetime'] = pd.to_datetime(df['Date'], format='%Y%m%d%H%M%S')
+            df['Month_Code'] = month # Keep track of source folder
+            dfs.append(df)
             
-        df = df.set_index('Datetime')
-        df = df.sort_index()
+        if not dfs:
+            raise RuntimeError("No data files found!")
+            
+        master_df = pd.concat(dfs).sort_values('Datetime').set_index('Datetime')
         
-        # Ensure numeric columns
-        cols_to_numeric = ['GHI', 'DNI', 'DHI', 'Temp', 'Pressure']
-        for col in cols_to_numeric:
-            if col in df.columns:
-                df[col] = pd.to_numeric(df[col], errors='coerce')
-        
-        df = df.dropna()
-        return lat, lon, alt, df
+        # Ensure numeric
+        cols = ['GHI', 'DNI', 'DHI', 'temperature', 'pressure']
+        for c in cols:
+            master_df[c] = pd.to_numeric(master_df[c], errors='coerce')
+            
+        return master_df.dropna()
 
     def _add_solar_physics(self, df, lat, lon, alt):
         # Calculate Solar Position
@@ -117,85 +105,112 @@ class SolarDataset(Dataset):
 
     def _match_images(self):
         samples = []
-        if not os.path.exists(self.images_dir):
-            return samples
+        # We iterate through the dataframe to find valid samples
+        # A valid sample has:
+        # 1. Image file existing
+        # 2. History (sequence_length * sampling_rate)
+        # 3. Future Targets (for all horizons)
+        
+        # Pre-check image existence to avoid disk I/O in loop? 
+        # No, structure is partitioned by month.
+        
+        valid_indices = []
+        
+        # Convert index to series for faster lookup
+        timestamps = pd.Series(self.df.index, index=self.df.index)
+        
+        for dt in self.df.index:
+            # 1. Check History
+            start_dt = dt - timedelta(seconds=self.sampling_rate * (self.sequence_length - 1))
+            if start_dt not in self.df.index:
+                continue
+                
+            # 2. Check Targets
+            has_targets = True
+            for h in self.horizons:
+                target_dt = dt + timedelta(minutes=h)
+                if target_dt not in self.df.index:
+                    has_targets = False
+                    break
+            if not has_targets:
+                continue
+                
+            # 3. Check Image
+            month_code = self.df.loc[dt, 'Month_Code']
+            # Handle case where Month_Code might be a Series if duplicate indices exist (shouldn't happen with set_index but safe to check)
+            if isinstance(month_code, pd.Series):
+                month_code = month_code.iloc[0]
+                
+            img_name = dt.strftime("%Y%m%d%H%M%S") + ".png"
+            img_path = os.path.join(self.root_dir, 'datasets', 'undistorted', f"{month_code}_Metas", img_name)
             
-        image_files = sorted(os.listdir(self.images_dir))
-        
-        for img_file in image_files:
-            if not img_file.endswith(('.jpg', '.png')):
-                continue
+            if os.path.exists(img_path):
+                samples.append((img_path, dt))
                 
-            try:
-                timestamp_str = img_file.split('_')[0]
-                img_dt = datetime.strptime(timestamp_str, "%Y%m%d%H%M%S")
-            except ValueError:
-                continue
-                
-            if img_dt in self.df.index:
-                # Check if we have enough history (60 mins)
-                start_dt = img_dt - timedelta(minutes=self.sequence_length - 1)
-                if start_dt in self.df.index:
-                     samples.append((img_file, img_dt))
-        
         return samples
 
     def __len__(self):
         return len(self.samples)
 
     def __getitem__(self, idx):
-        img_file, img_dt = self.samples[idx]
+        img_path, dt = self.samples[idx]
         
         # Load Image
-        img_path = os.path.join(self.images_dir, img_file)
         image = Image.open(img_path).convert('RGB')
         
-        # Apply Circular Mask (Radius 250)
+        # Resize to 512x512 (as per prompt)
         image = image.resize((512, 512))
         
-        # Create mask
+        # Masking
         mask = Image.new('L', (512, 512), 0)
         draw = ImageDraw.Draw(mask)
         center = (256, 256)
         radius = 250
         draw.ellipse((center[0]-radius, center[1]-radius, center[0]+radius, center[1]+radius), fill=255)
-        
-        # Apply mask
         image_np = np.array(image)
         mask_np = np.array(mask)
-        image_np[mask_np == 0] = 0 # Black out
+        image_np[mask_np == 0] = 0
         image = Image.fromarray(image_np)
         
         if self.transform:
             image = self.transform(image)
         
         # Get Weather Sequence
-        end_dt = img_dt
-        start_dt = end_dt - timedelta(minutes=self.sequence_length - 1)
+        # History: 60 steps back (30 mins)
+        start_dt = dt - timedelta(seconds=self.sampling_rate * (self.sequence_length - 1))
         
-        weather_slice = self.df.loc[start_dt:end_dt]
+        # We need to slice carefully. Since we filtered DF, rows might not be contiguous if there were gaps.
+        # But we checked existence in _match_images.
+        # Ideally we select by range, but we need exact steps.
+        # Let's generate the expected timestamps
+        seq_timestamps = [dt - timedelta(seconds=i*self.sampling_rate) for i in range(self.sequence_length)]
+        seq_timestamps.reverse() # Oldest to newest
         
-        # Select features: [k_index_lag, Temp, Pressure, SZA, Azimuth, sin_hour, cos_hour]
+        # Select
+        weather_slice = self.df.loc[seq_timestamps]
         features = weather_slice[self.feature_cols].values
-        
-        # Handle missing rows
-        if len(features) < self.sequence_length:
-            pad_len = self.sequence_length - len(features)
-            features = np.pad(features, ((pad_len, 0), (0, 0)), mode='edge')
-        elif len(features) > self.sequence_length:
-             features = features[-self.sequence_length:]
-             
         weather_seq = torch.tensor(features, dtype=torch.float32)
         
-        # Target k* (at T+0)
-        target_k = self.df.loc[img_dt, 'k_index']
-        target = torch.tensor([target_k], dtype=torch.float32)
+        # Targets (Multi-Horizon)
+        targets = []
+        ghi_cs_targets = []
         
-        # GHI_cs at T+0 (for reconstruction)
-        ghi_cs_t0 = self.df.loc[img_dt, 'GHI_cs']
-        ghi_cs = torch.tensor([ghi_cs_t0], dtype=torch.float32)
+        for h in self.horizons:
+            target_dt = dt + timedelta(minutes=h)
+            k_val = self.df.loc[target_dt, 'k_index']
+            ghi_cs_val = self.df.loc[target_dt, 'GHI_cs']
+            
+            # Handle potential duplicate index
+            if isinstance(k_val, pd.Series): k_val = k_val.iloc[0]
+            if isinstance(ghi_cs_val, pd.Series): ghi_cs_val = ghi_cs_val.iloc[0]
+            
+            targets.append(k_val)
+            ghi_cs_targets.append(ghi_cs_val)
+            
+        targets = torch.tensor(targets, dtype=torch.float32) # Shape: [4]
+        ghi_cs_targets = torch.tensor(ghi_cs_targets, dtype=torch.float32) # Shape: [4]
         
-        return image, weather_seq, target, ghi_cs
+        return image, weather_seq, targets, ghi_cs_targets
 
 def get_data_loaders(config):
     transform = transforms.Compose([
@@ -203,21 +218,22 @@ def get_data_loaders(config):
         transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
     ])
     
-    dataset = SolarDataset(
-        images_dir=config['data']['images_dir'],
-        met_data_path=config['data']['met_data_path'],
-        sequence_length=config['data']['sequence_length'],
-        transform=transform
-    )
+    dataset = SolarDataset(config, transform=transform)
     
-    # Split
-    val_size = int(len(dataset) * config['training']['val_split'])
-    train_size = len(dataset) - val_size
+    # Chronological Split (80/20)
+    total_len = len(dataset)
+    train_len = int(0.8 * total_len)
     
-    train_dataset = torch.utils.data.Subset(dataset, range(train_size))
-    val_dataset = torch.utils.data.Subset(dataset, range(train_size, len(dataset)))
+    # Indices are already chronological because samples were appended in chronological order of DF
+    indices = list(range(total_len))
+    train_indices = indices[:train_len]
+    val_indices = indices[train_len:]
+    
+    train_dataset = torch.utils.data.Subset(dataset, train_indices)
+    val_dataset = torch.utils.data.Subset(dataset, val_indices)
     
     train_loader = DataLoader(train_dataset, batch_size=config['data']['batch_size'], shuffle=True, num_workers=config['data']['num_workers'])
     val_loader = DataLoader(val_dataset, batch_size=config['data']['batch_size'], shuffle=False, num_workers=config['data']['num_workers'])
     
     return train_loader, val_loader
+

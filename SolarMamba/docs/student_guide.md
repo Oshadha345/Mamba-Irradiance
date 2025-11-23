@@ -93,7 +93,7 @@ We don't want to teach at the same speed forever.
 
 ## Part 5: Inference (Using the Brain)
 
-Once the model is trained, we use it for **Inference** (Prediction).
+Once the model is trained, we use it for **Inference** (Prediction). We can predict for different future times (Horizons), like 1 minute, 5 minutes, or 15 minutes ahead.
 
 1.  **Input:** We give it a *new* image and the last 60 minutes of weather.
 2.  **Process:**
@@ -105,6 +105,9 @@ Once the model is trained, we use it for **Inference** (Prediction).
     *   The model says: "The sky is 75% clear." ($k^* = 0.75$)
     *   Physics says: "If the sky was perfectly clear, you'd get 1000 Watts." ($GHI_{cs} = 1000$)
     *   **Final Prediction:** $0.75 \times 1000 = 750$ Watts.
+
+### Evaluating Performance
+We also check "who did the work?" by covering the model's eyes (Image-Blind) or erasing its memory (Time-Blind) to see which part is more important for different forecast times. Usually, memory helps for short term (1 min), and vision helps for longer term (15 min).
 
 ---
 

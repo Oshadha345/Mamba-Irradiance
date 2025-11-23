@@ -17,16 +17,31 @@ training:
 ```
 
 ## Running Training
-Execute the run script:
+
+### Standard Training (1-minute horizon)
 ```bash
 cd SolarMamba
-./run.sh
+python train.py --horizon 1 --output_dir ./checkpoints/1min
 ```
-Or run manually:
+
+### Multi-Horizon Training
+To train models for different forecast horizons (e.g., 15 minutes), specify the `--horizon` argument:
 ```bash
-cd SolarMamba
-python train.py
+python train.py --horizon 15 --output_dir ./checkpoints/15min
 ```
+
+## Evaluation
+
+After training, use the evaluation script to benchmark performance and run ablation studies.
+
+```bash
+python evaluate.py --checkpoints ./checkpoints/1min/best_model.pth ./checkpoints/15min/best_model.pth --horizons 1 15
+```
+
+This will:
+1.  Calculate RMSE and Skill Score for each horizon.
+2.  Run **Modality Ablation** (Image-Blind vs. Time-Blind) to quantify the contribution of visual vs. temporal features.
+3.  Generate a performance plot `evaluation_results.png`.
 
 ## Loss Function
 - **Type:** MSE Loss

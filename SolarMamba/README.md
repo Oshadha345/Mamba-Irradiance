@@ -164,14 +164,19 @@ python train.py
 ## Quick Start
 
 1. **Data Setup:**
-   - Create `data/` directory in the project root (if not exists).
-   - Place `PSA_timeSeries_Metas.csv` in `data/`.
-   - Place ASI images in `data/images/`.
-   - (Optional) Place pre-trained weights in `weights/`.
+   - **Local:** Run `python utils/mock_data.py` to generate dummy data.
+   - **Server:** Ensure data is at `/storage2/CV_Irradiance`.
+   - Update `config.yaml` to set `env: "local"` or `env: "server"`.
 
 2. **Run Training:**
 
 ```bash
 cd SolarMamba
-./run.sh
+python train.py --output_dir ./checkpoints
+```
+
+3. **Run Evaluation:**
+
+```bash
+python evaluate.py --checkpoint ./checkpoints/best_model.pth
 ```

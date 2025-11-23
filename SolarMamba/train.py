@@ -8,22 +8,36 @@ import numpy as np
 from tqdm import tqdm
 import matplotlib.pyplot as plt
 
+import argparse
+
 # Add parent directory to path to allow importing mambavision
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from models.ladder_net import MambaLadder
 from data_loader import get_data_loaders
 
-def train(config_path='config.yaml'):
+def train():
+    parser = argparse.ArgumentParser(description='Train SolarMamba')
+    parser.add_argument('--config', type=str, default='config.yaml', help='Path to config file')
+    parser.add_argument('--output_dir', type=str, default='.', help='Directory to save checkpoints')
+    args = parser.parse_args()
+
     # Load Config
-    with open(config_path, 'r') as f:
+    with open(args.config, 'r') as f:
         config = yaml.safe_load(f)
         
-    # Check Data Existence
-    if not os.path.exists(config['data']['met_data_path']):
-        raise FileNotFoundError(f"Metadata file not found at {config['data']['met_data_path']}. Please place the data in the correct location.")
-    if not os.path.exists(config['data']['images_dir']):
-        raise FileNotFoundError(f"Images directory not found at {config['data']['images_dir']}. Please place the images in the correct location.")
+    # Create output directory
+    os.makedirs(args.output_dir, exist_ok=True)
+        
+    # Check Data Existence (Basic check on root)
+    if config['env'] == 'server':
+        root = config['data']['server_root']
+    else:
+        root = config['data']['local_root']
+        
+    if not os.path.exists(root):
+        # If mock data generation is needed, we might want to warn
+        print(f"Warning: Root directory {root} does not exist. Ensure data is present or run mock_data.py.")
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     
@@ -53,10 +67,10 @@ def train(config_path='config.yaml'):
         for images, weather_seq, targets, _ in pbar:
             images = images.to(device)
             weather_seq = weather_seq.to(device)
-            targets = targets.to(device)
+            targets = targets.to(device) # Shape: (B, 4)
             
             optimizer.zero_grad()
-            outputs = model(images, weather_seq)
+            outputs = model(images, weather_seq) # Shape: (B, 4)
             loss = criterion(outputs, targets)
             loss.backward()
             optimizer.step()
@@ -92,10 +106,10 @@ def train(config_path='config.yaml'):
                 
         avg_val_loss = val_loss / len(val_loader)
         
-        # Metrics on Reconstructed GHI
-        all_preds_k = np.concatenate(all_preds_k)
-        all_targets_k = np.concatenate(all_targets_k)
-        all_ghi_cs = np.concatenate(all_ghi_cs)
+        # Metrics on Reconstructed GHI (Average across all horizons for summary)
+        all_preds_k = np.concatenate(all_preds_k, axis=0) # (N, 4)
+        all_targets_k = np.concatenate(all_targets_k, axis=0) # (N, 4)
+        all_ghi_cs = np.concatenate(all_ghi_cs, axis=0) # (N, 4)
         
         # Reconstruct GHI
         pred_ghi = all_preds_k * all_ghi_cs
@@ -103,16 +117,17 @@ def train(config_path='config.yaml'):
         
         rmse = np.sqrt(np.mean((pred_ghi - actual_ghi)**2))
         
-        print(f"Epoch {epoch+1}: Train Loss (k*): {avg_train_loss:.4f}, Val Loss (k*): {avg_val_loss:.4f}, Val RMSE (GHI): {rmse:.4f}")
+        print(f"Epoch {epoch+1}: Train Loss: {avg_train_loss:.4f}, Val Loss: {avg_val_loss:.4f}, Val RMSE (Avg): {rmse:.4f}")
         
         if avg_val_loss < best_val_loss:
             best_val_loss = avg_val_loss
-            torch.save(model.state_dict(), "best_model.pth")
-            print("Saved Best Model")
+            save_path = os.path.join(args.output_dir, "best_model.pth")
+            torch.save(model.state_dict(), save_path)
+            print(f"Saved Best Model to {save_path}")
 
     # Visualize one batch after training
-    print("Generating visualization...")
-    visualize_batch(model, val_loader)
+    # print("Generating visualization...")
+    # visualize_batch(model, val_loader) # Visualization needs update for multi-horizon, skipping for now or update later
 
 def visualize_batch(model, loader):
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')

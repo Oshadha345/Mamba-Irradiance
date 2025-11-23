@@ -47,7 +47,7 @@ class MambaLadder(nn.Module):
             nn.Linear(1920, 512),
             nn.ReLU(),
             nn.Dropout(0.2),
-            nn.Linear(512, 1), # Output k*
+            nn.Linear(512, 4), # Output k* for 4 horizons [1, 5, 10, 15]
             nn.Sigmoid() # k* is between 0 and 1.2 (scaled later)
         )
 
